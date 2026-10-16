@@ -1,0 +1,19 @@
+# Ambiente virtual
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Planilhas reais - nunca versionar (LGPD)
+*.xlsx
+!data/exemplo/*.xlsx
+
+# Backups e logs
+backup/
+*.log
+
+# Build do PyInstaller
+build/
+dist/
+*.spec
