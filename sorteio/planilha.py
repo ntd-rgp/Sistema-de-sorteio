@@ -36,13 +36,8 @@ ABA_GANHADORES = "Ganhadores"
 # ---------------------------------------------------------------------------
 # Caminho da planilha
 # ---------------------------------------------------------------------------
-def caminho_da_planilha() -> Path:
-    """Retorna o Path do arquivo Excel.
-
-    Se rodando como .exe (frozen), procura na pasta do executável.
-    Senão, usa o caminho de desenvolvimento.
-    Plano B: se o arquivo não existir, abre seletor de arquivos.
-    """
+def caminho_esperado() -> Path:
+    """Caminho esperado da planilha (sem abrir seletor)."""
     if getattr(sys, "frozen", False):
         pasta = Path(sys.executable).parent
     else:
@@ -50,12 +45,18 @@ def caminho_da_planilha() -> Path:
             r"C:\Users\FY0E\PETROBRAS"
             r"\Anna Clara Gomes Silva Sousa - PrestServ - SIPAT 2026"
         )
+    return pasta / NOME_ARQUIVO
 
-    caminho = pasta / NOME_ARQUIVO
+
+def caminho_da_planilha() -> Path:
+    """Retorna o Path do arquivo Excel.
+
+    Tenta o caminho esperado; se não existir, abre seletor de arquivos.
+    """
+    caminho = caminho_esperado()
     if caminho.exists():
         return caminho
 
-    # Plano B: seletor de arquivos
     from tkinter import filedialog
     arquivo = filedialog.askopenfilename(
         title="Escolher planilha",

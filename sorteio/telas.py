@@ -8,6 +8,7 @@ import customtkinter as ctk
 
 from sorteio.planilha import (
     caminho_da_planilha,
+    caminho_esperado,
     ler_inscricoes,
     ler_ganhadores,
     gravar_ganhadores,
@@ -345,7 +346,22 @@ class App(ctk.CTk):
         ctk.CTkLabel(
             self, text="Controles do Sorteio",
             font=("Segoe UI", 22, "bold"),
-        ).pack(padx=20, pady=(20, 10))
+        ).pack(padx=20, pady=(20, 5))
+
+        # Indicador de status da planilha
+        planilha = caminho_esperado()
+        if planilha.exists():
+            txt_status = f"Planilha conectada — {planilha.name}"
+            cor_status = "#66bb6a"
+        else:
+            txt_status = "Planilha não encontrada — coloque na mesma pasta do .exe"
+            cor_status = "#ef5350"
+
+        self.label_status = ctk.CTkLabel(
+            self, text=txt_status, text_color=cor_status,
+            font=("Segoe UI", 12),
+        )
+        self.label_status.pack(padx=20, pady=(0, 10))
 
         frame_cfg = ctk.CTkFrame(self)
         frame_cfg.pack(padx=20, pady=10, fill="x")
@@ -363,8 +379,12 @@ class App(ctk.CTk):
         ctk.CTkLabel(frame_cfg, text="Horário limite:").grid(
             row=1, column=0, padx=10, pady=8, sticky="w",
         )
+        self._var_horario = tk.StringVar()
+        self._var_horario.trace_add("write", self._formatar_horario)
+        self._formatando_horario = False
         self.entry_horario = ctk.CTkEntry(
-            frame_cfg, placeholder_text="HH:MM", width=120,
+            frame_cfg, textvariable=self._var_horario,
+            placeholder_text="HHMM", width=120,
         )
         self.entry_horario.grid(row=1, column=1, padx=10, pady=8, sticky="w")
 
@@ -409,6 +429,23 @@ class App(ctk.CTk):
             self, text="Sessão: 0 ganhadores acumulados",
         )
         self.label_sessao.pack(padx=20, pady=(5, 20))
+
+    # ── Auto-formatação do horário (4 dígitos → HH:MM) ─────────
+
+    def _formatar_horario(self, *_args):
+        if self._formatando_horario:
+            return
+        self._formatando_horario = True
+
+        digitos = "".join(c for c in self._var_horario.get() if c.isdigit())[:4]
+
+        if len(digitos) > 2:
+            formatado = digitos[:2] + ":" + digitos[2:]
+        else:
+            formatado = digitos
+
+        self._var_horario.set(formatado)
+        self._formatando_horario = False
 
     # ── Play ──────────────────────────────────────────────────────
 
