@@ -110,9 +110,10 @@ def ler_inscricoes(arquivo_excel, evento=None, horario_limite=None):
             hora_celula = valores[COL_HORA]
             if hora_celula is None:
                 continue
-            # O openpyxl pode devolver datetime ou string
-            if isinstance(hora_celula, str):
-                hora_celula = datetime.strptime(hora_celula, "%d/%m/%Y %H:%M")
+            if isinstance(hora_celula, datetime):
+                hora_celula = hora_celula.time()
+            elif isinstance(hora_celula, str):
+                hora_celula = datetime.strptime(hora_celula, "%H:%M").time()
             if hora_celula > horario_limite:
                 continue
 

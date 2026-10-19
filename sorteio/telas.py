@@ -12,7 +12,7 @@ from sorteio.planilha import (
     ler_ganhadores,
     gravar_ganhadores,
 )
-from sorteio.sorteador import listar_eventos, filtrar_ja_ganhadores, sortear
+from sorteio.sorteador import filtrar_ja_ganhadores, sortear
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -25,6 +25,38 @@ def _cor_fundo():
         return cores[1] if ctk.get_appearance_mode() == "Dark" else cores[0]
     except (KeyError, IndexError):
         return "#2b2b2b" if ctk.get_appearance_mode() == "Dark" else "#dbdbdb"
+
+
+# ──────────────────────────────────────────────────────────────────
+# Eventos SIPAT 2026  (label curto, valor de filtro na planilha)
+# ⚠️ Os valores de filtro devem coincidir com a coluna de evento
+#    na planilha do Forms. Confirmar contra a planilha real.
+# ──────────────────────────────────────────────────────────────────
+EVENTOS_SIPAT = [
+    ("Abertura + Denison/Fabi",            "Abertura, Palestra do Denison e Fabi"),
+    ("Palestra Josué + Teatro Educa Vida", "Palestra Josue, Teatro educa vida"),
+    ("Game Show Porta Refeitório",         "Game Show porta refeitório"),
+    ("Palestra Josué Refeitório",          "Palestra Josue no refeitório"),
+    ("Game Show C3",                       "Game Show C3"),
+    ("Game Show Gramo",                    "Game Show Gramo"),
+    ("Encerramento + Rodrigo/Peralta",     "Encerramento, Palestra Rodrigo, Palestra Peralta"),
+    ("14h — Oficina Marmita 1",            "Oficina de marmita 1 - 14h"),
+    ("15h — Oficina Marmita 2",            "Oficina de marmita 2 - 15h"),
+    ("14h — Plantio Mudas 1",              "Plantio de mudas 1 - 14"),
+    ("15h — Plantio Mudas 2",              "Plantio de mudas 2 - 15"),
+    ("11/11 — GA: Oficina Marmita",        "Turno GA: Oficina de marmita 11/11"),
+    ("12/11 — GA: Geral",                  "Turno GA: Geral 12/11"),
+    ("13/11 — GB: Oficina Marmita",        "Turno GB: Oficina de marmita 13/11"),
+    ("14/11 — GB: Geral",                  "Turno GB: Geral 14/11"),
+    ("14/11 — GC: Oficina Marmita",        "Turno GC: Oficina de marmita 14/11"),
+    ("16/11 — GC: Geral",                  "Turno GC: Geral 16/11"),
+    ("06/11 — GD: Oficina Marmita",        "Turno GD: Oficina de marmita 06/11"),
+    ("18/11 — GD: Geral",                  "Turno GD: Geral 18/11"),
+    ("09/11 — GE: Oficina Marmita",        "Turno GE: Oficina de marmita 09/11"),
+    ("11/11 — GE: Geral",                  "Turno GE: Geral 11/11"),
+]
+
+_MAPA_EVENTOS = {label: filtro for label, filtro in EVENTOS_SIPAT}
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -294,10 +326,18 @@ class App(ctk.CTk):
         self.ganhadores_sessao = []
         self.evento_travado = False
 
+        self._display = None
+
         self._criar_widgets()
-        self._display = JanelaExibicao(self)
-        self._carregar_eventos()
         self.protocol("WM_DELETE_WINDOW", self._ao_fechar_janela)
+
+    def _garantir_display(self):
+        """Cria a janela de exibição se ainda não existe, ou reexibe se oculta."""
+        if self._display is None or not self._display.winfo_exists():
+            self._display = JanelaExibicao(self)
+        else:
+            self._display.deiconify()
+            self._display.lift()
 
     # ── Widgets ───────────────────────────────────────────────────
 
@@ -313,21 +353,18 @@ class App(ctk.CTk):
         ctk.CTkLabel(frame_cfg, text="Evento:").grid(
             row=0, column=0, padx=10, pady=8, sticky="w",
         )
+        _labels = [label for label, _ in EVENTOS_SIPAT]
         self.combo_evento = ctk.CTkOptionMenu(
-            frame_cfg, values=["Carregando..."], width=300,
+            frame_cfg, values=_labels, width=300,
         )
+        self.combo_evento.set(_labels[0])
         self.combo_evento.grid(row=0, column=1, padx=10, pady=8, sticky="w")
-        self.btn_recarregar = ctk.CTkButton(
-            frame_cfg, text="Recarregar", width=100,
-            command=self._carregar_eventos,
-        )
-        self.btn_recarregar.grid(row=0, column=2, padx=10, pady=8)
 
         ctk.CTkLabel(frame_cfg, text="Horário limite:").grid(
             row=1, column=0, padx=10, pady=8, sticky="w",
         )
         self.entry_horario = ctk.CTkEntry(
-            frame_cfg, placeholder_text="dd/mm/aaaa HH:MM", width=220,
+            frame_cfg, placeholder_text="HH:MM", width=120,
         )
         self.entry_horario.grid(row=1, column=1, padx=10, pady=8, sticky="w")
 
@@ -362,45 +399,23 @@ class App(ctk.CTk):
         )
         self.btn_encerrar.pack(side="left", padx=10, pady=10, expand=True, fill="x")
 
+        self.btn_tela = ctk.CTkButton(
+            self, text="Abrir Tela de Exibição",
+            command=self._garantir_display, height=36,
+        )
+        self.btn_tela.pack(padx=20, pady=5, fill="x")
+
         self.label_sessao = ctk.CTkLabel(
             self, text="Sessão: 0 ganhadores acumulados",
         )
         self.label_sessao.pack(padx=20, pady=(5, 20))
 
-    # ── Carregar eventos ──────────────────────────────────────────
-
-    def _carregar_eventos(self):
-        arquivo = caminho_da_planilha()
-        if not arquivo.exists():
-            messagebox.showerror(
-                "Arquivo não encontrado",
-                f"Planilha não encontrada em:\n{arquivo}\n\n"
-                "Verifique se a pasta está sincronizada.",
-            )
-            self.combo_evento.configure(values=["(nenhum)"])
-            self.combo_evento.set("(nenhum)")
-            return
-
-        try:
-            todas = ler_inscricoes(arquivo)
-            eventos = listar_eventos(todas)
-        except Exception as e:
-            messagebox.showerror("Erro ao ler planilha", str(e))
-            return
-
-        if not eventos:
-            self.combo_evento.configure(values=["(nenhum evento)"])
-            self.combo_evento.set("(nenhum evento)")
-            return
-
-        self.combo_evento.configure(values=eventos)
-        self.combo_evento.set(eventos[0])
-
     # ── Play ──────────────────────────────────────────────────────
 
     def _ao_clicar_play(self):
-        evento = self.combo_evento.get()
-        if evento in ("Carregando...", "(nenhum)", "(nenhum evento)"):
+        evento_label = self.combo_evento.get()
+        evento = _MAPA_EVENTOS.get(evento_label)
+        if not evento:
             messagebox.showwarning("Evento", "Selecione um evento válido.")
             return
 
@@ -409,11 +424,11 @@ class App(ctk.CTk):
             messagebox.showwarning("Horário", "Informe o horário limite.")
             return
         try:
-            horario_limite = datetime.strptime(texto_horario, "%d/%m/%Y %H:%M")
+            horario_limite = datetime.strptime(texto_horario, "%H:%M").time()
         except ValueError:
             messagebox.showwarning(
                 "Horário inválido",
-                "Use o formato dd/mm/aaaa HH:MM\nExemplo: 20/10/2026 08:30",
+                "Use o formato HH:MM\nExemplo: 08:30",
             )
             return
 
@@ -440,7 +455,6 @@ class App(ctk.CTk):
         if not self.evento_travado:
             self.evento_travado = True
             self.combo_evento.configure(state="disabled")
-            self.btn_recarregar.configure(state="disabled")
 
         arquivo = caminho_da_planilha()
         try:
@@ -466,7 +480,8 @@ class App(ctk.CTk):
         self._atualizar_contador()
         self.btn_encerrar.configure(state="normal")
 
-        self._display.adicionar_rodada(resultado, evento, premio)
+        self._garantir_display()
+        self._display.adicionar_rodada(resultado, evento_label, premio)
 
     # ── Contador ──────────────────────────────────────────────────
 
@@ -502,10 +517,10 @@ class App(ctk.CTk):
         self._atualizar_contador()
         self.evento_travado = False
         self.combo_evento.configure(state="normal")
-        self.btn_recarregar.configure(state="normal")
         self.btn_encerrar.configure(state="disabled")
 
-        self._display.limpar_tudo()
+        if self._display and self._display.winfo_exists():
+            self._display.limpar_tudo()
 
     # ── Fechar janela ─────────────────────────────────────────────
 
