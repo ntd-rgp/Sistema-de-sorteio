@@ -1,2 +1,6 @@
-openpyxl
-customtkinter
+# Dependências de runtime
+openpyxl==3.1.5
+customtkinter==6.0.0
+
+# Dependência opcional para empacotamento do executável
+pyinstaller>=6.0.0,<7.0.0
