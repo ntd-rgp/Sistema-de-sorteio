@@ -41,6 +41,7 @@ def caminho_da_planilha() -> Path:
 
     Se rodando como .exe (frozen), procura na pasta do executável.
     Senão, usa o caminho de desenvolvimento.
+    Plano B: se o arquivo não existir, abre seletor de arquivos.
     """
     if getattr(sys, "frozen", False):
         pasta = Path(sys.executable).parent
@@ -49,7 +50,21 @@ def caminho_da_planilha() -> Path:
             r"C:\Users\FY0E\PETROBRAS"
             r"\Anna Clara Gomes Silva Sousa - PrestServ - SIPAT 2026"
         )
-    return pasta / NOME_ARQUIVO
+
+    caminho = pasta / NOME_ARQUIVO
+    if caminho.exists():
+        return caminho
+
+    # Plano B: seletor de arquivos
+    from tkinter import filedialog
+    arquivo = filedialog.askopenfilename(
+        title="Escolher planilha",
+        filetypes=[("Excel", "*.xlsx")],
+    )
+    if arquivo:
+        return Path(arquivo)
+
+    return caminho
 
 
 # ---------------------------------------------------------------------------
