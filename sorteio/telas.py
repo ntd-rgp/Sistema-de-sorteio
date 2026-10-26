@@ -61,6 +61,29 @@ _MAPA_EVENTOS = {label: filtro for label, filtro in EVENTOS_SIPAT}
 
 
 # ──────────────────────────────────────────────────────────────────
+# Cores da janela de exibição — sempre clara (fundo branco),
+# independente do modo escuro da janela de controles.
+# ──────────────────────────────────────────────────────────────────
+EXIB_FUNDO = "#ffffff"
+EXIB_CARD = "#f3f5f7"
+EXIB_BORDA = "#d5dae0"
+EXIB_TEXTO = "#1a1a1a"
+EXIB_TEXTO_SEC = "#5f6368"
+EXIB_PREMIO_FUNDO = "#d10c56"
+EXIB_PREMIO_TEXTO = "#ffffff"
+
+
+def _etiqueta_premio(parent, premio, tamanho):
+    """Etiqueta do prêmio: texto branco em negrito sobre fundo destacado."""
+    return ctk.CTkLabel(
+        parent, text=premio,
+        font=("Segoe UI", tamanho, "bold"),
+        fg_color=EXIB_PREMIO_FUNDO, text_color=EXIB_PREMIO_TEXTO,
+        corner_radius=8, padx=14, pady=2,
+    )
+
+
+# ──────────────────────────────────────────────────────────────────
 # Painel com rolagem automática infinita
 # ──────────────────────────────────────────────────────────────────
 class PainelRolagem(ctk.CTkFrame):
@@ -70,11 +93,12 @@ class PainelRolagem(ctk.CTkFrame):
     cópia, o offset retorna a zero — transição imperceptível.
     """
 
-    def __init__(self, master, velocidade=1, intervalo=40, **kwargs):
+    def __init__(self, master, velocidade=1, intervalo=40, cor_fundo=None, **kwargs):
         super().__init__(master, **kwargs)
 
+        self._cor_fundo = cor_fundo
         self._canvas = tk.Canvas(
-            self, highlightthickness=0, bd=0, bg=_cor_fundo(),
+            self, highlightthickness=0, bd=0, bg=cor_fundo or _cor_fundo(),
         )
         self._canvas.pack(fill="both", expand=True)
 
@@ -95,7 +119,7 @@ class PainelRolagem(ctk.CTkFrame):
 
     def _ao_redim_canvas(self, event):
         self._canvas.itemconfig(self._win_id, width=event.width)
-        self._canvas.configure(bg=_cor_fundo())
+        self._canvas.configure(bg=self._cor_fundo or _cor_fundo())
 
     def _ao_redim_conteudo(self, event):
         self._canvas.configure(scrollregion=(0, 0, event.width, event.height))
@@ -152,6 +176,9 @@ class JanelaExibicao(ctk.CTkToplevel):
         self.title("Sorteio SIPAT 2026 — Ganhadores")
         self.geometry("1400x800")
         self.minsize(900, 600)
+        self.configure(fg_color=EXIB_FUNDO)
+        # Abre maximizada para ocupar toda a tela do projetor
+        self.after(100, lambda: self.state("zoomed"))
 
         self._rodada_num = 0
         self._rodadas = []
@@ -166,37 +193,51 @@ class JanelaExibicao(ctk.CTkToplevel):
 
     def _criar_layout(self):
         container = ctk.CTkFrame(self, fg_color="transparent")
-        container.pack(fill="both", expand=True, padx=10, pady=10)
+        container.pack(fill="both", expand=True, padx=6, pady=6)
         container.grid_columnconfigure(0, weight=1)
         container.grid_columnconfigure(1, weight=1)
         container.grid_rowconfigure(0, weight=1)
 
         # Painel esquerdo — rodada atual
-        esq = ctk.CTkFrame(container)
+        esq = ctk.CTkFrame(
+            container, fg_color=EXIB_FUNDO,
+            border_width=1, border_color=EXIB_BORDA,
+        )
         esq.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
 
         ctk.CTkLabel(
             esq, text="Ganhadores da Rodada",
-            font=("Segoe UI", 26, "bold"),
-        ).pack(padx=15, pady=(15, 5))
+            font=("Segoe UI", 34, "bold"), text_color=EXIB_TEXTO,
+        ).pack(padx=10, pady=(12, 2))
 
-        self._lbl_rodada = ctk.CTkLabel(esq, text="", font=("Segoe UI", 15))
-        self._lbl_rodada.pack(padx=15, pady=(0, 10))
+        self._lbl_rodada = ctk.CTkLabel(
+            esq, text="", font=("Segoe UI", 20), text_color=EXIB_TEXTO_SEC,
+        )
+        self._lbl_rodada.pack(padx=10, pady=(0, 8))
 
-        self._painel_rodada = PainelRolagem(esq, velocidade=1, intervalo=40)
-        self._painel_rodada.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self._painel_rodada = PainelRolagem(
+            esq, velocidade=1, intervalo=40,
+            cor_fundo=EXIB_FUNDO, fg_color=EXIB_FUNDO,
+        )
+        self._painel_rodada.pack(fill="both", expand=True, padx=4, pady=(0, 6))
 
         # Painel direito — acumulado
-        dire = ctk.CTkFrame(container)
+        dire = ctk.CTkFrame(
+            container, fg_color=EXIB_FUNDO,
+            border_width=1, border_color=EXIB_BORDA,
+        )
         dire.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
 
         ctk.CTkLabel(
             dire, text="Todos os Ganhadores",
-            font=("Segoe UI", 26, "bold"),
-        ).pack(padx=15, pady=(15, 10))
+            font=("Segoe UI", 34, "bold"), text_color=EXIB_TEXTO,
+        ).pack(padx=10, pady=(12, 8))
 
-        self._painel_todos = PainelRolagem(dire, velocidade=1, intervalo=40)
-        self._painel_todos.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self._painel_todos = PainelRolagem(
+            dire, velocidade=1, intervalo=40,
+            cor_fundo=EXIB_FUNDO, fg_color=EXIB_FUNDO,
+        )
+        self._painel_todos.pack(fill="both", expand=True, padx=4, pady=(0, 6))
 
     # ── API pública ───────────────────────────────────────────────
 
@@ -239,24 +280,24 @@ class JanelaExibicao(ctk.CTkToplevel):
     @staticmethod
     def _criar_cards(parent, ganhadores):
         for nome, mat, empresa, premio in ganhadores:
-            card = ctk.CTkFrame(parent, corner_radius=12)
-            card.pack(fill="x", padx=8, pady=6)
+            card = ctk.CTkFrame(parent, corner_radius=12, fg_color=EXIB_CARD)
+            card.pack(fill="x", padx=4, pady=5)
 
             ctk.CTkLabel(
                 card, text=nome,
-                font=("Segoe UI", 22, "bold"), anchor="w",
-            ).pack(padx=15, pady=(12, 2), anchor="w")
+                font=("Segoe UI", 38, "bold"), anchor="w",
+                text_color=EXIB_TEXTO,
+            ).pack(padx=16, pady=(10, 0), anchor="w")
 
             ctk.CTkLabel(
                 card, text=f"Matrícula: {mat}  ·  {empresa}",
-                font=("Segoe UI", 15), anchor="w",
-            ).pack(padx=15, pady=(0, 2), anchor="w")
+                font=("Segoe UI", 24), anchor="w",
+                text_color=EXIB_TEXTO_SEC,
+            ).pack(padx=16, pady=(0, 6), anchor="w")
 
-            ctk.CTkLabel(
-                card, text=f"Prêmio: {premio}",
-                font=("Segoe UI", 15), anchor="w",
-                text_color=("#1b5e20", "#66bb6a"),
-            ).pack(padx=15, pady=(0, 12), anchor="w")
+            _etiqueta_premio(card, premio, 30).pack(
+                padx=16, pady=(0, 12), anchor="w",
+            )
 
     # ── Painel direito ────────────────────────────────────────────
 
@@ -279,35 +320,45 @@ class JanelaExibicao(ctk.CTkToplevel):
     def _criar_blocos(parent, rodadas):
         for i, (premio, evento, ganhadores) in enumerate(rodadas, 1):
             caixa = ctk.CTkFrame(
-                parent, corner_radius=12,
-                border_width=2, border_color=("#999999", "#555555"),
+                parent, corner_radius=12, fg_color=EXIB_CARD,
+                border_width=1, border_color=EXIB_BORDA,
             )
-            caixa.pack(fill="x", padx=8, pady=8)
+            caixa.pack(fill="x", padx=4, pady=6)
+
+            cabecalho = ctk.CTkFrame(caixa, fg_color="transparent")
+            cabecalho.pack(fill="x", padx=14, pady=(12, 0))
 
             ctk.CTkLabel(
-                caixa, text=f"Rodada {i} — {premio}",
-                font=("Segoe UI", 17, "bold"), anchor="w",
-            ).pack(padx=12, pady=(10, 3), anchor="w")
+                cabecalho, text=f"Rodada {i}",
+                font=("Segoe UI", 28, "bold"), anchor="w",
+                text_color=EXIB_TEXTO,
+            ).pack(side="left")
+
+            _etiqueta_premio(cabecalho, premio, 26).pack(
+                side="left", padx=(14, 0),
+            )
 
             ctk.CTkLabel(
                 caixa, text=evento,
-                font=("Segoe UI", 12), anchor="w",
-                text_color=("gray50", "gray60"),
-            ).pack(padx=12, pady=(0, 6), anchor="w")
+                font=("Segoe UI", 18), anchor="w",
+                text_color=EXIB_TEXTO_SEC,
+            ).pack(padx=14, pady=(2, 6), anchor="w")
 
             for nome, mat, empresa, pr in ganhadores:
                 linha = ctk.CTkFrame(caixa, fg_color="transparent")
-                linha.pack(fill="x", padx=12, pady=3)
+                linha.pack(fill="x", padx=14, pady=4)
 
                 ctk.CTkLabel(
                     linha, text=f"• {nome}",
-                    font=("Segoe UI", 14, "bold"), anchor="w",
+                    font=("Segoe UI", 28, "bold"), anchor="w",
+                    text_color=EXIB_TEXTO,
                 ).pack(anchor="w")
 
                 ctk.CTkLabel(
                     linha,
-                    text=f"   Mat: {mat}  ·  {empresa}  ·  Prêmio: {pr}",
-                    font=("Segoe UI", 12), anchor="w",
+                    text=f"   Matrícula: {mat}  ·  {empresa}",
+                    font=("Segoe UI", 20), anchor="w",
+                    text_color=EXIB_TEXTO_SEC,
                 ).pack(anchor="w")
 
             ctk.CTkFrame(caixa, height=5, fg_color="transparent").pack()
@@ -536,7 +587,7 @@ class App(ctk.CTk):
 
         arquivo = caminho_da_planilha()
         try:
-            gravar_ganhadores(arquivo, self.ganhadores_sessao)
+            destino = gravar_ganhadores(arquivo, self.ganhadores_sessao)
         except PermissionError as e:
             messagebox.showerror("Erro ao salvar", str(e))
             return
@@ -547,7 +598,8 @@ class App(ctk.CTk):
         n = len(self.ganhadores_sessao)
         messagebox.showinfo(
             "Sorteio encerrado",
-            f"{n} ganhador(es) gravado(s) na aba 'Ganhadores'.",
+            f"{n} ganhador(es) gravado(s) em:\n"
+            f"{destino.parent.name}\\{destino.name}",
         )
 
         self.ganhadores_sessao.clear()
@@ -563,17 +615,13 @@ class App(ctk.CTk):
 
     def _ao_fechar_janela(self):
         if self.ganhadores_sessao:
-            resposta = messagebox.askyesnocancel(
-                "Ganhadores não salvos",
+            messagebox.showwarning(
+                "Sorteio em andamento",
                 f"Há {len(self.ganhadores_sessao)} ganhador(es) não salvo(s).\n\n"
-                "Deseja salvar antes de sair?",
+                "Clique em 'Encerrar Sorteio' para salvar os ganhadores "
+                "antes de fechar o programa.",
             )
-            if resposta is None:
-                return
-            if resposta:
-                self._ao_clicar_encerrar()
-                if self.ganhadores_sessao:
-                    return
+            return
 
         self.destroy()
 

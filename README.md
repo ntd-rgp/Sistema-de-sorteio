@@ -1,6 +1,6 @@
 # Sistema de Sorteio SIPAT 2026
 
-Aplicação desktop em Python para sortear prêmios entre inscritos de palestras, atividades e oficinas da SIPAT (Petrobras). O sistema lê inscrições de uma planilha Excel gerada pelo Microsoft Forms, filtra os participantes elegíveis, sorteia os ganhadores e grava o resultado em uma aba `Ganhadores` na mesma planilha.
+Aplicação desktop em Python para sortear prêmios entre inscritos de palestras, atividades e oficinas da SIPAT (Petrobras). O sistema lê inscrições de uma planilha Excel gerada pelo Microsoft Forms, filtra os participantes elegíveis, sorteia os ganhadores e grava o resultado de cada sessão em um arquivo próprio na pasta `Ganhadores/`, ao lado da planilha (sincronizada com o SharePoint). A planilha do Forms não é alterada, o que permite vários computadores sorteando ao mesmo tempo.
 
 ## Visão geral
 
@@ -8,7 +8,7 @@ Aplicação desktop em Python para sortear prêmios entre inscritos de palestras
 - Interface desktop com `CustomTkinter`
 - Seleção de evento, quantidade, horário limite e prêmio
 - Validação de elegibilidade conforme regras de negócio do projeto
-- Backup automático antes de salvar os resultados
+- Um arquivo de ganhadores por sessão (sem conflito entre computadores)
 - Suporte a execução local em Windows e empacotamento em `.exe`
 
 ## Requisitos

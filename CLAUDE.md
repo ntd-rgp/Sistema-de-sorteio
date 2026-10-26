@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Sistema de Sorteio SIPAT 2026 — aplicação desktop local em Python para sortear prêmios entre inscritos de palestras, atividades e oficinas da SIPAT (Petrobras). Lê inscrições de uma planilha Excel gerada pelo Microsoft Forms e grava ganhadores na mesma planilha.
+Sistema de Sorteio SIPAT 2026 — aplicação desktop local em Python para sortear prêmios entre inscritos de palestras, atividades e oficinas da SIPAT (Petrobras). Lê inscrições de uma planilha Excel gerada pelo Microsoft Forms e grava os ganhadores de cada sessão num arquivo próprio na pasta `Ganhadores/` ao lado da planilha.
 
 A especificação completa está em `SPEC.md` (fonte de verdade do projeto).
 
@@ -75,9 +75,14 @@ self.evento_travado: bool     # True durante a sessão; trava CTkOptionMenu e bt
 
 `Encerrar` chama `gravar_ganhadores`, esvazia a lista e desfaz a trava. Fechar a janela com ganhadores não salvos pergunta antes de sair.
 
-### Backup automático
+### Gravação de ganhadores (vários computadores ao mesmo tempo)
 
-`gravar_ganhadores` **sempre** faz backup antes de salvar, copiando o arquivo para `backup/` (ao lado da planilha) com data/hora no nome. Se o arquivo estiver aberto no Excel, lança `PermissionError` com mensagem amigável — os ganhadores ficam na sessão para nova tentativa.
+A planilha do Forms **nunca é reescrita** — o sistema só a lê. Isso evita conflito de sincronização do OneDrive quando vários computadores sorteiam ao mesmo tempo.
+
+- `gravar_ganhadores` cria um arquivo **novo** a cada sessão em `Ganhadores/` (ao lado da planilha, sincronizado para o SharePoint): `<evento> - <AAAA-MM-DD_HHMMSS> - <computador>.xlsx`. Nunca altera arquivos existentes. Retorna o `Path` criado. Se não conseguir gravar, lança `PermissionError` com mensagem amigável — os ganhadores ficam na sessão para nova tentativa.
+- `ler_ganhadores` junta a aba "Ganhadores" da planilha principal (legado, se existir) + a primeira aba de cada `.xlsx` em `Ganhadores/` (ignora `~$*`).
+- Leituras tentam de novo (3x, 1 s) em caso de `PermissionError` (OneDrive bloqueando o arquivo durante a sincronização) antes de mostrar mensagem amigável.
+- Limitação: dois computadores sorteando o **mesmo evento** ao mesmo tempo só enxergam os ganhadores um do outro depois que o OneDrive sincroniza — RN-03 entre máquinas depende desse atraso.
 
 ## Key rules
 

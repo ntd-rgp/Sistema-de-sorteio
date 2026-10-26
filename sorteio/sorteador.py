@@ -34,14 +34,14 @@ def filtrar_ja_ganhadores(inscricoes, ganhadores_planilha, ganhadores_sessao, ev
 
     Parâmetros:
         inscricoes: lista de tuplas (saída de ler_inscricoes, já filtrada por evento/horário).
-        ganhadores_planilha: lista de tuplas da aba "Ganhadores".
+        ganhadores_planilha: lista de tuplas já gravadas (saída de ler_ganhadores).
         ganhadores_sessao: lista de tuplas (evento, nome, matricula, empresa, premio) da sessão atual.
         evento: nome do evento sendo sorteado.
 
     Retorna lista de inscrições elegíveis.
     """
     # Monta o conjunto de matrículas que já ganharam NESTE evento.
-    # Na aba Ganhadores: coluna 0 = Evento, coluna 2 = Matrícula
+    # Nos ganhadores gravados: coluna 0 = Evento, coluna 2 = Matrícula
     matriculas_ganhadoras = set()
 
     evento_norm = evento.strip()

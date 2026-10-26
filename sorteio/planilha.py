@@ -1,11 +1,13 @@
 """Leitura e gravação da planilha Excel (inscrições e ganhadores)."""
 
-import shutil
+import re
+import socket
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 # ---------------------------------------------------------------------------
 # Nome do arquivo Excel (gerado pelo Microsoft Forms)
@@ -26,11 +28,20 @@ COL_EVENTO = 7      # coluna H
 COL_HORA = 2        # coluna C — hora de conclusão (momento do envio)
 
 # ---------------------------------------------------------------------------
-# Cabeçalho da aba "Ganhadores"
+# Ganhadores
+# Cada sessão encerrada gera um arquivo próprio na pasta "Ganhadores/" ao lado
+# da planilha (sincronizada pelo OneDrive). A planilha do Forms nunca é
+# reescrita, então vários computadores podem gravar ao mesmo tempo sem
+# conflito de sincronização.
 # ---------------------------------------------------------------------------
 CABECALHO_GANHADORES = ["Evento", "Nome", "Matrícula", "Empresa", "Prêmio", "Assinatura"]
 
 ABA_GANHADORES = "Ganhadores"
+PASTA_GANHADORES = "Ganhadores"
+
+# Tentativas de abrir um arquivo bloqueado (ex.: OneDrive sincronizando)
+TENTATIVAS_LEITURA = 3
+ESPERA_ENTRE_TENTATIVAS = 1.0  # segundos
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +79,37 @@ def caminho_da_planilha() -> Path:
     return caminho
 
 
+def pasta_ganhadores(arquivo_excel) -> Path:
+    """Pasta onde ficam os arquivos de ganhadores (ao lado da planilha)."""
+    return Path(arquivo_excel).parent / PASTA_GANHADORES
+
+
+# ---------------------------------------------------------------------------
+# Abertura com nova tentativa
+# ---------------------------------------------------------------------------
+def _abrir_para_leitura(arquivo_excel):
+    """Abre o Excel em modo leitura, tentando de novo se estiver bloqueado.
+
+    O OneDrive bloqueia o arquivo por alguns instantes enquanto sincroniza;
+    nesse caso o Windows devolve PermissionError (Errno 13).
+    """
+    for tentativa in range(TENTATIVAS_LEITURA):
+        try:
+            return load_workbook(arquivo_excel, read_only=True, data_only=True)
+        except PermissionError:
+            if tentativa < TENTATIVAS_LEITURA - 1:
+                time.sleep(ESPERA_ENTRE_TENTATIVAS)
+
+    raise PermissionError(
+        f"Não foi possível abrir o arquivo:\n{Path(arquivo_excel).name}\n\n"
+        "Verifique se:\n"
+        "• o OneDrive terminou de sincronizar a pasta;\n"
+        "• a pasta está marcada como \"Sempre manter neste dispositivo\";\n"
+        "• você tem acesso à pasta compartilhada.\n\n"
+        "Depois tente novamente."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Leitura de inscrições
 # ---------------------------------------------------------------------------
@@ -83,7 +125,7 @@ def ler_inscricoes(arquivo_excel, evento=None, horario_limite=None):
       - hora de conclusão <= horario_limite
     Com ambos None, devolve tudo (usado para listar eventos).
     """
-    wb = load_workbook(arquivo_excel, read_only=True, data_only=True)
+    wb = _abrir_para_leitura(arquivo_excel)
     ws = wb.worksheets[0]  # sempre a primeira aba (nunca active)
 
     inscricoes = []
@@ -127,19 +169,9 @@ def ler_inscricoes(arquivo_excel, evento=None, horario_limite=None):
 # ---------------------------------------------------------------------------
 # Leitura de ganhadores
 # ---------------------------------------------------------------------------
-def ler_ganhadores(arquivo_excel):
-    """Lê a aba 'Ganhadores' e devolve lista de tuplas.
-
-    Se a aba não existir, devolve lista vazia.
-    """
-    wb = load_workbook(arquivo_excel, read_only=True, data_only=True)
-
-    if ABA_GANHADORES not in wb.sheetnames:
-        wb.close()
-        return []
-
-    ws = wb[ABA_GANHADORES]
-    ganhadores = []
+def _linhas_da_aba(ws):
+    """Linhas da aba a partir da linha 2, ignorando as totalmente vazias."""
+    linhas = []
     primeira_linha = True
     for row in ws.iter_rows(min_row=1):
         if primeira_linha:
@@ -150,58 +182,80 @@ def ler_ganhadores(arquivo_excel):
         if all(v is None for v in valores):
             continue
 
-        ganhadores.append(valores)
+        linhas.append(valores)
+    return linhas
 
+
+def ler_ganhadores(arquivo_excel):
+    """Lê todos os ganhadores já gravados e devolve lista de tuplas.
+
+    Junta:
+      - a aba 'Ganhadores' da planilha principal, se existir (versões antigas
+        do sistema gravavam lá);
+      - a primeira aba de cada arquivo .xlsx da pasta 'Ganhadores/'.
+    """
+    ganhadores = []
+
+    wb = _abrir_para_leitura(arquivo_excel)
+    if ABA_GANHADORES in wb.sheetnames:
+        ganhadores.extend(_linhas_da_aba(wb[ABA_GANHADORES]))
     wb.close()
+
+    pasta = pasta_ganhadores(arquivo_excel)
+    if pasta.is_dir():
+        for arquivo in sorted(pasta.glob("*.xlsx")):
+            # "~$..." são arquivos temporários do Excel (arquivo aberto)
+            if arquivo.name.startswith("~$"):
+                continue
+            wb = _abrir_para_leitura(arquivo)
+            ganhadores.extend(_linhas_da_aba(wb.worksheets[0]))
+            wb.close()
+
     return ganhadores
 
 
 # ---------------------------------------------------------------------------
 # Gravação de ganhadores
 # ---------------------------------------------------------------------------
-def _fazer_backup(arquivo_excel):
-    """Copia o arquivo para a pasta backup/ com data/hora no nome."""
-    caminho = Path(arquivo_excel)
-    pasta_backup = caminho.parent / "backup"
-    pasta_backup.mkdir(exist_ok=True)
-
-    agora = datetime.now().strftime("%Y%m%d_%H%M%S")
-    nome_backup = f"{caminho.stem}_{agora}{caminho.suffix}"
-    shutil.copy2(caminho, pasta_backup / nome_backup)
+def _nome_arquivo_sessao(evento) -> str:
+    """Nome único do arquivo da sessão: evento + data/hora + computador."""
+    evento_limpo = re.sub(r'[<>:"/\\|?*]', "-", str(evento)).strip(" .")
+    agora = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    computador = socket.gethostname()
+    return f"{evento_limpo} - {agora} - {computador}.xlsx"
 
 
 def gravar_ganhadores(arquivo_excel, ganhadores):
-    """Grava a lista de ganhadores na aba 'Ganhadores'.
+    """Grava os ganhadores da sessão num arquivo novo em 'Ganhadores/'.
 
-    - Cria a aba com cabeçalho se não existir.
     - Cada ganhador é uma tupla (evento, nome, matricula, empresa, premio).
     - Adiciona coluna "Assinatura" vazia ao final de cada linha.
-    - Faz backup antes de salvar.
-    - Trata PermissionError (planilha aberta no Excel).
+    - Nunca altera a planilha do Forms nem arquivos de outras sessões.
 
-    Retorna None em caso de sucesso.
-    Levanta PermissionError com mensagem amigável se o arquivo estiver aberto.
+    Retorna o Path do arquivo criado.
+    Levanta PermissionError com mensagem amigável se não conseguir gravar.
     """
-    _fazer_backup(arquivo_excel)
+    pasta = pasta_ganhadores(arquivo_excel)
+    destino = pasta / _nome_arquivo_sessao(ganhadores[0][0])
 
-    wb = load_workbook(arquivo_excel)
-
-    if ABA_GANHADORES not in wb.sheetnames:
-        ws = wb.create_sheet(ABA_GANHADORES)
-        ws.append(CABECALHO_GANHADORES)
-    else:
-        ws = wb[ABA_GANHADORES]
-
+    wb = Workbook()
+    ws = wb.active
+    ws.title = ABA_GANHADORES
+    ws.append(CABECALHO_GANHADORES)
     for ganhador in ganhadores:
         ws.append(list(ganhador) + [""])
 
     try:
-        wb.save(arquivo_excel)
+        pasta.mkdir(exist_ok=True)
+        wb.save(destino)
     except PermissionError:
-        wb.close()
         raise PermissionError(
-            "Não foi possível salvar a planilha. "
-            "Feche a planilha no Excel e tente novamente."
+            "Não foi possível salvar os ganhadores na pasta:\n"
+            f"{pasta}\n\n"
+            "Verifique se você tem permissão de edição na pasta "
+            "compartilhada e tente novamente."
         )
+    finally:
+        wb.close()
 
-    wb.close()
+    return destino
