@@ -48,7 +48,7 @@ Dados passam entre módulos **por parâmetros e retornos**, nunca por importaç�
 
 ### Dois tipos de tupla — não confundir
 
-`ler_inscricoes` devolve tuplas com **todos os campos da linha da planilha** (tamanho varia conforme a planilha do Forms). Os índices de cada campo são as constantes `COL_*` definidas em `planilha.py` e importadas por `sorteador.py`.
+`ler_inscricoes` devolve tuplas de **5 campos** `(hora, nome, empresa, matricula, evento)` nas posições das constantes `COL_*` de `planilha.py` (importadas por `sorteador.py`). A posição de cada coluna **na planilha** é descoberta pelo cabeçalho (`_mapear_colunas`, palavras-chave em `CABECALHOS_ESPERADOS`) — o Forms adiciona colunas automáticas ("Nome", "Hora da última modificação") que deslocam as perguntas. `hora` já vem como `datetime` (ou `None`).
 
 `sortear` e `gravar_ganhadores` trabalham com tuplas de **5 elementos fixos** (RN-08):
 ```python
@@ -56,15 +56,18 @@ Dados passam entre módulos **por parâmetros e retornos**, nunca por importaç�
 ```
 Essa estrutura é o único formato aceito por `gravar_ganhadores` e é o que `App.ganhadores_sessao` acumula.
 
-### Dual-use de `ler_inscricoes`
+### Fluxo de leitura
+
+`ler_inscricoes(arquivo)` só lê; as regras ficam em `sorteador.py`:
 
 ```python
-# Sem filtros → devolve tudo; usado por _carregar_eventos para popular o CTkOptionMenu
-ler_inscricoes(arquivo)
-
-# Com filtros → aplica RN-02 itens 1 e 2; usado por _ao_clicar_play no momento do play
-ler_inscricoes(arquivo, evento=evento, horario_limite=horario_limite)
+inscricoes = ler_inscricoes(arquivo)
+listar_eventos(inscricoes)                                        # _carregar_eventos (início e botão Recarregar)
+planilha_pode_estar_desatualizada(inscricoes, horario_limite)     # aviso antes de sortear (OneDrive atrasado)
+filtrar_inscricoes(inscricoes, evento, horario_limite)            # RN-02 itens 1 e 2
 ```
+
+Eventos são comparados com `normalizar_texto` (sem acento, minúsculas, espaços simples); células de múltipla seleção do Forms (`"A;B;"`) são separadas por `eventos_da_celula`. A lista suspensa mostra os eventos **da planilha**; `EVENTOS_SIPAT` em `telas.py` só dá o label curto quando o texto bate.
 
 ### Estado da sessão (App em telas.py)
 
@@ -81,7 +84,7 @@ A planilha do Forms **nunca é reescrita** — o sistema só a lê. Isso evita c
 
 - `gravar_ganhadores` cria um arquivo **novo** a cada sessão em `Ganhadores/` (ao lado da planilha, sincronizado para o SharePoint): `<evento> - <AAAA-MM-DD_HHMMSS> - <computador>.xlsx`. Nunca altera arquivos existentes. Retorna o `Path` criado. Se não conseguir gravar, lança `PermissionError` com mensagem amigável — os ganhadores ficam na sessão para nova tentativa.
 - `ler_ganhadores` junta a aba "Ganhadores" da planilha principal (legado, se existir) + a primeira aba de cada `.xlsx` em `Ganhadores/` (ignora `~$*`).
-- Leituras tentam de novo (3x, 1 s) em caso de `PermissionError` (OneDrive bloqueando o arquivo durante a sincronização) antes de mostrar mensagem amigável.
+- Leituras copiam o arquivo inteiro para a memória (`read_bytes` + `BytesIO`) e tentam de novo (6x, 1 s) em caso de `OSError` ou ZIP pela metade (OneDrive sincronizando) antes de mostrar mensagem amigável com o detalhe técnico. Arquivo criptografado (assinatura OLE) tem mensagem própria.
 - Limitação: dois computadores sorteando o **mesmo evento** ao mesmo tempo só enxergam os ganhadores um do outro depois que o OneDrive sincroniza — RN-03 entre máquinas depende desse atraso.
 
 ## Key rules
@@ -90,5 +93,5 @@ A planilha do Forms **nunca é reescrita** — o sistema só a lê. Isso evita c
 - Planilhas reais nunca vão para o git (LGPD). Testes sempre em `data/exemplo/teste.xlsx`.
 - A planilha é lida no momento do play (não ao abrir o programa) — RN-07.
 - Normalização de matrícula: `str(valor).strip().upper()` — RN-04.
-- Constantes de índice das colunas (`COL_NOME`, `COL_EMPRESA`, `COL_MATRICULA`, `COL_EVENTO`, `COL_HORA`) ficam em `planilha.py`. Nunca usar índices soltos espalhados pelo código.
-- **Pendência crítica:** os índices de coluna são provisórios (baseados na estrutura típica do Forms). Devem ser confirmados contra a planilha real antes de usar em produção — seção 3.1 do SPEC.
+- Constantes de índice dos campos (`COL_NOME`, `COL_EMPRESA`, `COL_MATRICULA`, `COL_EVENTO`, `COL_HORA`) ficam em `planilha.py`. Nunca usar índices soltos espalhados pelo código.
+- Se a planilha real tiver um cabeçalho que as palavras-chave não reconhecem, ajustar `CABECALHOS_ESPERADOS` em `planilha.py` (a mensagem de erro lista os cabeçalhos encontrados) — seção 3.1 do SPEC.

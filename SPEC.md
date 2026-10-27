@@ -65,7 +65,17 @@ Colunas de negócio:
 | Evento | filtro do sorteio |
 | Hora | filtro pelo horário limite |
 
-> ⚠️ **Pendência:** confirmar os **nomes exatos** dos cabeçalhos e a **posição** de cada coluna na exportação real do Forms (o Forms costuma adicionar colunas automáticas como "ID", "Hora de início", "Hora de conclusão", "Email"). A coluna de horário a usar é a de **conclusão** (momento do envio).
+A **posição** de cada coluna é descoberta pelo **cabeçalho** da linha 1 (sem acento, minúsculas), porque o Forms adiciona colunas automáticas ("ID", "Hora de início", "Hora de conclusão", "Email", "Nome", "Hora da última modificação") e a ordem pode variar:
+
+| Dado | Cabeçalho deve conter |
+|---|---|
+| Hora | "hora de conclusão" (momento do envio) |
+| Matrícula | "matrícula" ou "chave" |
+| Empresa | "empresa" (opcional) |
+| Evento | "evento", "palestra", "atividade" ou "oficina" |
+| Nome | "nome" — vale a **última** coluna, para pular o "Nome" automático do Forms |
+
+Se faltar uma coluna obrigatória, o sistema mostra os cabeçalhos encontrados. Em perguntas de múltipla seleção, o Forms grava as opções separadas por `;` — cada uma conta como um evento.
 
 ### 3.2 Arquivos de ganhadores (pasta `Ganhadores/`)
 A planilha do Forms **não é alterada** pelo sistema (só lida). Cada "Encerrar sorteio" cria um arquivo **novo** na pasta `Ganhadores/`, ao lado da planilha — dentro da pasta sincronizada, portanto enviado ao mesmo SharePoint. Nome do arquivo: `<evento> - <AAAA-MM-DD_HHMMSS> - <computador>.xlsx` (caracteres inválidos no evento viram `-`). Como cada sessão tem seu próprio arquivo, vários computadores podem gravar ao mesmo tempo sem conflito.
@@ -192,7 +202,7 @@ telas.py      → mostra os ganhadores; acumula na lista da sessão
 | Função | Entrada | Saída | Regras |
 |---|---|---|---|
 | `caminho_da_planilha()` | — | `Path` do Excel | Se `sys.frozen`: pasta do `.exe` + `NOME_ARQUIVO`. Senão: caminho de desenvolvimento. |
-| `ler_inscricoes(arquivo_excel, evento=None, horario_limite=None)` | caminho, filtros opcionais | lista de tuplas (linhas) | Lê a aba de inscrições a partir da linha 2; ignora linhas vazias; se `evento`/`horario_limite` forem informados, aplica RN-02 itens 1 e 2. Com filtros `None`, devolve tudo (usado para listar eventos). |
+| `ler_inscricoes(arquivo_excel)` | caminho | lista de tuplas `(hora, nome, empresa, matricula, evento)` | Lê a primeira aba; localiza as colunas pelo cabeçalho (3.1); ignora linhas vazias; hora vira `datetime`. Lê o arquivo inteiro para a memória antes de abrir (não segura o arquivo do OneDrive). |
 | `ler_ganhadores(arquivo_excel)` | caminho | lista de tuplas | Junta a aba "Ganhadores" da planilha (se existir) e a primeira aba de cada `.xlsx` em `Ganhadores/` (ignora `~$*`). Lê a partir da linha 2, ignorando vazias. |
 | `gravar_ganhadores(arquivo_excel, ganhadores)` | caminho, lista de tuplas (RN-08) | `Path` do arquivo criado | Cria arquivo novo em `Ganhadores/` com cabeçalho; para cada ganhador, `append(list(ganhador) + [""])`; **um único `save` no final**. Nunca altera a planilha nem arquivos existentes. Trata `PermissionError`. |
 
@@ -203,6 +213,8 @@ Convenção: o **caminho do arquivo é sempre o primeiro parâmetro**.
 | Função | Entrada | Saída | Regras |
 |---|---|---|---|
 | `listar_eventos(inscricoes)` | lista de inscrições | lista ordenada de eventos distintos | Para popular a lista suspensa. |
+| `filtrar_inscricoes(inscricoes, evento, horario_limite)` | lista + evento + hora | lista filtrada | RN-02 itens 1 e 2, com RN-04. |
+| `planilha_pode_estar_desatualizada(inscricoes, horario_limite)` | lista + hora | bool | Resposta mais recente anterior ao horário limite (ou a agora) por mais de 2 min → aviso antes de sortear. |
 | `filtrar_ja_ganhadores(inscricoes, ganhadores_planilha, ganhadores_sessao, evento)` | listas + evento | lista de elegíveis | RN-02 item 3, com RN-04. |
 | `sortear(elegiveis, quantidade, evento, premio)` | elegíveis, int, str, str | lista de tuplas (RN-08) | RN-05. Lança erro claro se `quantidade` > elegíveis. |
 
@@ -222,17 +234,7 @@ iniciar()
 ```
 
 ### 5.5 Acesso às colunas
-As linhas são tuplas (sem nome de coluna). Os **índices** de cada coluna devem ficar definidos **num único lugar** em `planilha.py` (constantes), por exemplo:
-
-```python
-COL_NOME = ...
-COL_EMPRESA = ...
-COL_MATRICULA = ...
-COL_EVENTO = ...
-COL_HORA = ...
-```
-
-Os valores devem ser confirmados contra a planilha real (pendência 3.1). Nunca usar índices "soltos" (`linha[2]`) espalhados pelo código.
+As linhas são tuplas (sem nome de coluna). Os **índices** de cada campo ficam definidos **num único lugar** em `planilha.py` (constantes `COL_HORA`, `COL_NOME`, `COL_EMPRESA`, `COL_MATRICULA`, `COL_EVENTO`). São posições na tupla montada por `ler_inscricoes`, não na planilha — a posição na planilha vem do cabeçalho (3.1). Nunca usar índices "soltos" (`linha[2]`) espalhados pelo código.
 
 ---
 
@@ -327,7 +329,9 @@ def caminho_da_planilha():
 
 | Risco | Mitigação |
 |---|---|
-| Arquivo bloqueado (OneDrive sincronizando) → `PermissionError` (Errno 13) ao ler | Tentar de novo 3x com 1 s de intervalo; depois, mensagem amigável. Manter os ganhadores na sessão para nova tentativa. |
+| Arquivo bloqueado (OneDrive sincronizando) → `PermissionError` (Errno 13) ao ler | Ler o arquivo inteiro para a memória e fechar na hora; tentar de novo 6x com 1 s de intervalo (também se vier pela metade); depois, mensagem amigável com o detalhe técnico do erro. Manter os ganhadores na sessão para nova tentativa. |
+| Planilha protegida (senha / rótulo de confidencialidade com criptografia) | Detectado pela assinatura do arquivo; mensagem pedindo para remover a proteção. |
+| OneDrive demora a baixar as respostas novas do Forms → sorteio com planilha desatualizada | Status mostra a hora da última resposta; antes de sortear, se ela for mais de 2 min anterior ao horário limite (ou a agora), o sistema avisa e pergunta se quer sortear mesmo assim. |
 | openpyxl reescreveria o arquivo inteiro, perdendo respostas do Forms / quebrando a ligação | **Resolvido:** a planilha do Forms nunca é gravada; ganhadores vão para arquivos separados (seção 3.2). |
 | Conflito de sincronização do OneDrive (vários computadores gravando) | **Resolvido:** cada sessão grava um arquivo com nome único (evento + data/hora + computador). |
 | Dois computadores sorteando o **mesmo evento** ao mesmo tempo | Um só enxerga os ganhadores do outro depois que o OneDrive sincroniza; evitar, ou aguardar a sincronização entre sessões. |
@@ -336,7 +340,7 @@ def caminho_da_planilha():
 | Cabeçalho pulado duas vezes (`min_row=2` + `next`) exclui o primeiro inscrito | Usar **apenas um** dos dois. |
 | Arquivo não sincronizado (só na nuvem) sem internet | "Sempre manter neste dispositivo" em cada computador. |
 | Executável bloqueado por política/antivírus | Testar o `.exe` em um computador que não seja o do desenvolvedor antes do evento. |
-| Nome do evento digitado de formas diferentes no Forms | Usar campo de **múltipla escolha** no Forms; normalizar com `strip()`. |
+| Nome do evento digitado de formas diferentes no Forms | Usar campo de **múltipla escolha** no Forms; a lista suspensa é montada com os eventos da própria planilha; comparação sem acento, maiúsculas ou espaços extras. |
 | Atualizar o `.exe` com alguém usando | Atualizar apenas fora dos horários de sorteio. |
 
 ---
@@ -376,8 +380,9 @@ Deve conter: descrição, requisitos, instalação, como usar no dia do evento, 
 
 Testes manuais (no terminal, com a cópia de teste):
 
-- [ ] `ler_inscricoes` sem filtros devolve todas as linhas não vazias, **incluindo o primeiro inscrito**.
-- [ ] `ler_inscricoes` com evento e horário devolve só inscrições daquele evento até o horário limite.
+- [ ] `ler_inscricoes` devolve todas as linhas não vazias, **incluindo o primeiro inscrito**, com nome/matrícula/evento das colunas certas mesmo com as colunas automáticas do Forms.
+- [ ] `filtrar_inscricoes` devolve só inscrições daquele evento (ignorando acento/maiúsculas) até o horário limite.
+- [ ] Com a planilha antiga (última resposta antes do horário limite), o Play avisa que ela pode estar desatualizada.
 - [ ] `ler_ganhadores` devolve `[]` quando a aba não existe.
 - [ ] `gravar_ganhadores` cria um arquivo novo em `Ganhadores/` com cabeçalho a cada sessão.
 - [ ] Dois computadores encerrando ao mesmo tempo geram dois arquivos, sem perder nenhum ganhador.

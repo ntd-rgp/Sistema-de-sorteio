@@ -8,12 +8,19 @@ import customtkinter as ctk
 
 from sorteio.planilha import (
     caminho_da_planilha,
-    caminho_esperado,
     ler_inscricoes,
     ler_ganhadores,
     gravar_ganhadores,
+    normalizar_texto,
 )
-from sorteio.sorteador import filtrar_ja_ganhadores, sortear
+from sorteio.sorteador import (
+    filtrar_inscricoes,
+    filtrar_ja_ganhadores,
+    listar_eventos,
+    planilha_pode_estar_desatualizada,
+    resposta_mais_recente,
+    sortear,
+)
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -29,9 +36,11 @@ def _cor_fundo():
 
 
 # ──────────────────────────────────────────────────────────────────
-# Eventos SIPAT 2026  (label curto, valor de filtro na planilha)
-# ⚠️ Os valores de filtro devem coincidir com a coluna de evento
-#    na planilha do Forms. Confirmar contra a planilha real.
+# Eventos SIPAT 2026  (label curto, texto da opção no Forms)
+# A lista suspensa mostra os eventos que existem na planilha; quando o
+# texto da planilha bate com um destes (ignorando acento, maiúsculas e
+# espaços), aparece o label curto. Eventos fora desta lista aparecem
+# com o texto da planilha.
 # ──────────────────────────────────────────────────────────────────
 EVENTOS_SIPAT = [
     ("Abertura + Denison/Fabi",            "Abertura, Palestra do Denison e Fabi"),
@@ -57,7 +66,24 @@ EVENTOS_SIPAT = [
     ("11/11 — GE: Geral",                  "Turno GE: Geral 11/11"),
 ]
 
-_MAPA_EVENTOS = {label: filtro for label, filtro in EVENTOS_SIPAT}
+SEM_EVENTOS = "(nenhum evento — clique em Recarregar)"
+
+
+def _rotulos_eventos(eventos):
+    """Monta {label exibido: texto do evento na planilha}.
+
+    Eventos conhecidos (EVENTOS_SIPAT) vêm primeiro, na ordem da lista,
+    com o label curto; os demais vêm depois, com o texto da planilha.
+    """
+    por_texto = {normalizar_texto(e): e for e in eventos}
+    rotulos = {}
+    for label, texto in EVENTOS_SIPAT:
+        evento = por_texto.pop(normalizar_texto(texto), None)
+        if evento is not None:
+            rotulos[label] = evento
+    for evento in por_texto.values():
+        rotulos[evento] = evento
+    return rotulos
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -372,16 +398,19 @@ class App(ctk.CTk):
         super().__init__()
 
         self.title("Sorteio SIPAT 2026 — Controles")
-        self.geometry("560x500")
+        self.geometry("620x540")
         self.minsize(450, 420)
 
         self.ganhadores_sessao = []
         self.evento_travado = False
 
         self._display = None
+        self._arquivo = None   # Path da planilha, resolvido na primeira leitura
+        self._eventos = {}     # {label exibido: texto do evento na planilha}
 
         self._criar_widgets()
         self.protocol("WM_DELETE_WINDOW", self._ao_fechar_janela)
+        self.after(200, self._carregar_eventos)
 
     def _garantir_display(self):
         """Cria a janela de exibição se ainda não existe, ou reexibe se oculta."""
@@ -399,18 +428,10 @@ class App(ctk.CTk):
             font=("Segoe UI", 22, "bold"),
         ).pack(padx=20, pady=(20, 5))
 
-        # Indicador de status da planilha
-        planilha = caminho_esperado()
-        if planilha.exists():
-            txt_status = f"Planilha conectada — {planilha.name}"
-            cor_status = "#66bb6a"
-        else:
-            txt_status = "Planilha não encontrada — coloque na mesma pasta do .exe"
-            cor_status = "#ef5350"
-
+        # Indicador de status da planilha (atualizado a cada leitura)
         self.label_status = ctk.CTkLabel(
-            self, text=txt_status, text_color=cor_status,
-            font=("Segoe UI", 12),
+            self, text="Lendo planilha…", text_color="#ffb74d",
+            font=("Segoe UI", 12), justify="center",
         )
         self.label_status.pack(padx=20, pady=(0, 10))
 
@@ -420,12 +441,18 @@ class App(ctk.CTk):
         ctk.CTkLabel(frame_cfg, text="Evento:").grid(
             row=0, column=0, padx=10, pady=8, sticky="w",
         )
-        _labels = [label for label, _ in EVENTOS_SIPAT]
         self.combo_evento = ctk.CTkOptionMenu(
-            frame_cfg, values=_labels, width=300,
+            frame_cfg, values=[SEM_EVENTOS], width=300,
+            dynamic_resizing=False,
         )
-        self.combo_evento.set(_labels[0])
+        self.combo_evento.set(SEM_EVENTOS)
         self.combo_evento.grid(row=0, column=1, padx=10, pady=8, sticky="w")
+
+        self.btn_recarregar = ctk.CTkButton(
+            frame_cfg, text="Recarregar", width=90,
+            command=self._carregar_eventos,
+        )
+        self.btn_recarregar.grid(row=0, column=2, padx=(0, 10), pady=8, sticky="w")
 
         ctk.CTkLabel(frame_cfg, text="Horário limite:").grid(
             row=1, column=0, padx=10, pady=8, sticky="w",
@@ -481,6 +508,65 @@ class App(ctk.CTk):
         )
         self.label_sessao.pack(padx=20, pady=(5, 20))
 
+    # ── Leitura da planilha ───────────────────────────────────────
+
+    def _arquivo_planilha(self):
+        """Path da planilha; abre o seletor só se ainda não houver um válido."""
+        if self._arquivo is None or not self._arquivo.exists():
+            self._arquivo = caminho_da_planilha()
+        return self._arquivo
+
+    def _ler_inscricoes(self):
+        """Lê a planilha agora e atualiza o status. Devolve None se falhar."""
+        arquivo = self._arquivo_planilha()
+        self.label_status.configure(text="Lendo planilha…", text_color="#ffb74d")
+        self.configure(cursor="watch")
+        self.update_idletasks()
+        try:
+            inscricoes = ler_inscricoes(arquivo)
+        except Exception as e:
+            self.label_status.configure(
+                text=f"Erro ao ler a planilha — {arquivo.name}",
+                text_color="#ef5350",
+            )
+            messagebox.showerror("Erro ao ler planilha", str(e))
+            return None
+        finally:
+            self.configure(cursor="")
+
+        ultima = resposta_mais_recente(inscricoes)
+        txt_ultima = ultima.strftime("%d/%m %H:%M:%S") if ultima else "—"
+        self.label_status.configure(
+            text=(
+                f"{arquivo.name}\n"
+                f"Lida às {datetime.now():%H:%M:%S} · {len(inscricoes)} inscrições"
+                f" · última resposta: {txt_ultima}"
+            ),
+            text_color="#66bb6a",
+        )
+        return inscricoes
+
+    def _carregar_eventos(self):
+        """Preenche a lista suspensa com os eventos que existem na planilha."""
+        if self.evento_travado:
+            return
+
+        inscricoes = self._ler_inscricoes()
+        if inscricoes is None:
+            return
+
+        selecionado = self._eventos.get(self.combo_evento.get())
+        self._eventos = _rotulos_eventos(listar_eventos(inscricoes))
+        labels = list(self._eventos) or [SEM_EVENTOS]
+        self.combo_evento.configure(values=labels)
+
+        # Mantém o evento que estava escolhido, se ainda existir
+        atual = next(
+            (label for label, evento in self._eventos.items() if evento == selecionado),
+            labels[0],
+        )
+        self.combo_evento.set(atual)
+
     # ── Auto-formatação do horário (4 dígitos → HH:MM) ─────────
 
     def _formatar_horario(self, *_args):
@@ -502,9 +588,13 @@ class App(ctk.CTk):
 
     def _ao_clicar_play(self):
         evento_label = self.combo_evento.get()
-        evento = _MAPA_EVENTOS.get(evento_label)
+        evento = self._eventos.get(evento_label)
         if not evento:
-            messagebox.showwarning("Evento", "Selecione um evento válido.")
+            messagebox.showwarning(
+                "Evento",
+                "Selecione um evento válido.\n\n"
+                "Se a lista estiver vazia, clique em Recarregar.",
+            )
             return
 
         texto_horario = self.entry_horario.get().strip()
@@ -540,20 +630,36 @@ class App(ctk.CTk):
             messagebox.showwarning("Prêmio", "Informe o prêmio da rodada.")
             return
 
-        if not self.evento_travado:
-            self.evento_travado = True
-            self.combo_evento.configure(state="disabled")
-
-        arquivo = caminho_da_planilha()
+        # A planilha é lida no momento do play (RN-07)
+        inscricoes = self._ler_inscricoes()
+        if inscricoes is None:
+            return
         try:
-            inscricoes = ler_inscricoes(
-                arquivo, evento=evento, horario_limite=horario_limite,
-            )
-            ganhadores_planilha = ler_ganhadores(arquivo)
+            ganhadores_planilha = ler_ganhadores(self._arquivo)
         except Exception as e:
-            messagebox.showerror("Erro ao ler planilha", str(e))
+            messagebox.showerror("Erro ao ler ganhadores", str(e))
             return
 
+        # O OneDrive pode demorar a baixar as respostas mais novas do Forms
+        if planilha_pode_estar_desatualizada(inscricoes, horario_limite):
+            ultima = resposta_mais_recente(inscricoes)
+            txt_ultima = ultima.strftime("%d/%m/%Y %H:%M:%S") if ultima else "nenhuma"
+            continuar = messagebox.askyesno(
+                "Planilha pode estar desatualizada",
+                "A planilha neste computador pode ainda não ter todas as "
+                "inscrições.\n\n"
+                f"Última resposta recebida: {txt_ultima}\n"
+                f"Horário limite do sorteio: {texto_horario}\n\n"
+                "O OneDrive pode estar demorando para baixar as respostas "
+                "mais recentes do Forms. Aguarde a sincronização (ícone do "
+                "OneDrive sem setas azuis) e clique em Play de novo.\n\n"
+                "Sortear mesmo assim?",
+                icon="warning", default="no",
+            )
+            if not continuar:
+                return
+
+        inscricoes = filtrar_inscricoes(inscricoes, evento, horario_limite)
         elegiveis = filtrar_ja_ganhadores(
             inscricoes, ganhadores_planilha, self.ganhadores_sessao, evento,
         )
@@ -563,6 +669,11 @@ class App(ctk.CTk):
         except ValueError as e:
             messagebox.showwarning("Sorteio", str(e))
             return
+
+        if not self.evento_travado:
+            self.evento_travado = True
+            self.combo_evento.configure(state="disabled")
+            self.btn_recarregar.configure(state="disabled")
 
         self.ganhadores_sessao.extend(resultado)
         self._atualizar_contador()
@@ -585,9 +696,8 @@ class App(ctk.CTk):
         if not self.ganhadores_sessao:
             return
 
-        arquivo = caminho_da_planilha()
         try:
-            destino = gravar_ganhadores(arquivo, self.ganhadores_sessao)
+            destino = gravar_ganhadores(self._arquivo_planilha(), self.ganhadores_sessao)
         except PermissionError as e:
             messagebox.showerror("Erro ao salvar", str(e))
             return
@@ -606,6 +716,7 @@ class App(ctk.CTk):
         self._atualizar_contador()
         self.evento_travado = False
         self.combo_evento.configure(state="normal")
+        self.btn_recarregar.configure(state="normal")
         self.btn_encerrar.configure(state="disabled")
 
         if self._display and self._display.winfo_exists():
