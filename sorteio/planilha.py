@@ -340,12 +340,23 @@ def ler_ganhadores(arquivo_excel):
 # ---------------------------------------------------------------------------
 # Gravação de ganhadores
 # ---------------------------------------------------------------------------
-def _nome_arquivo_sessao(evento) -> str:
-    """Nome único do arquivo da sessão: evento + data/hora + computador."""
+def _destino_sessao(pasta, evento) -> Path:
+    """Arquivo novo da sessão: evento + data/hora + computador.
+
+    Se já existir um com o mesmo nome (duas sessões no mesmo segundo),
+    acrescenta " (2)", " (3)"… — nunca sobrescreve ganhadores gravados.
+    """
     evento_limpo = re.sub(r'[<>:"/\\|?*]', "-", str(evento)).strip(" .")
     agora = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     computador = socket.gethostname()
-    return f"{evento_limpo} - {agora} - {computador}.xlsx"
+    base = f"{evento_limpo} - {agora} - {computador}"
+
+    destino = pasta / f"{base}.xlsx"
+    n = 2
+    while destino.exists():
+        destino = pasta / f"{base} ({n}).xlsx"
+        n += 1
+    return destino
 
 
 def gravar_ganhadores(arquivo_excel, ganhadores):
@@ -359,7 +370,6 @@ def gravar_ganhadores(arquivo_excel, ganhadores):
     Levanta PermissionError com mensagem amigável se não conseguir gravar.
     """
     pasta = pasta_ganhadores(arquivo_excel)
-    destino = pasta / _nome_arquivo_sessao(ganhadores[0][0])
 
     wb = Workbook()
     ws = wb.active
@@ -370,6 +380,7 @@ def gravar_ganhadores(arquivo_excel, ganhadores):
 
     try:
         pasta.mkdir(exist_ok=True)
+        destino = _destino_sessao(pasta, ganhadores[0][0])
         wb.save(destino)
     except PermissionError:
         raise PermissionError(

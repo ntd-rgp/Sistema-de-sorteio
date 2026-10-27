@@ -114,9 +114,12 @@ Inscritos depois do horário limite **não são elegíveis**.
 ### RN-03 — Ganhar mais de uma vez
 - **Proibido** ganhar duas vezes **no mesmo evento**.
 - **Permitido** ganhar em **eventos diferentes**.
+- A mesma pessoa é reconhecida pela **matrícula ou pelo nome** (normalizados), para pegar quem se inscreveu mais de uma vez com a matrícula digitada de outro jeito. Inscrições repetidas contam como **uma chance só** no sorteio.
 
 ### RN-04 — Normalização
-Para comparações, a matrícula é normalizada: sem espaços nas pontas e em maiúsculas (`str(valor).strip().upper()`). O nome do evento também deve ser comparado sem espaços nas pontas.
+Para comparações:
+- **matrícula:** só letras e dígitos, em maiúsculas; se for só número, sem zeros à esquerda (`"0012345"`, `12345`, `12345.0` e `"12.345"` são a mesma);
+- **nome e evento:** sem acentos, minúsculas, espaços extras removidos. Nome vazio ou "anonymous" não identifica ninguém.
 
 ### RN-05 — Sorteio
 - Sorteio **sem repetição** entre os elegíveis, usando `secrets.SystemRandom().sample(...)` (aleatoriedade criptográfica do sistema operacional, imprevisível).
@@ -416,7 +419,7 @@ Testes manuais (no terminal, com a cópia de teste):
 - Modo amostragem caprichado (animação, identidade visual SIPAT)
 - Log de auditoria com semente, data/hora e total de elegíveis (arquivo `.log` ao lado da planilha)
 - Contador "N inscritos elegíveis" ao trocar de evento
-- Testes automatizados com `pytest`
+- ~~Testes automatizados~~ — feito com `unittest` em `tests/` (`python -m unittest discover -s tests -t . -v`)
 
 ---
 

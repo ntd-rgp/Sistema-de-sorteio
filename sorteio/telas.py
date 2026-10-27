@@ -115,8 +115,10 @@ def _etiqueta_premio(parent, premio, tamanho):
 class PainelRolagem(ctk.CTkFrame):
     """Frame cujo conteúdo rola automaticamente em loop infinito.
 
-    O conteúdo é duplicado internamente; ao atingir o fim da primeira
-    cópia, o offset retorna a zero — transição imperceptível.
+    Se o conteúdo cabe na área visível, aparece uma vez só e fica parado.
+    Se não cabe, ganha uma segunda cópia logo abaixo e rola; ao atingir o
+    fim da primeira cópia, o offset retorna a zero — transição imperceptível.
+    A decisão é refeita a cada passo, então acompanha o redimensionamento.
     """
 
     def __init__(self, master, velocidade=1, intervalo=40, cor_fundo=None, **kwargs):
@@ -137,7 +139,9 @@ class PainelRolagem(ctk.CTkFrame):
         self.conteudo.bind("<Configure>", self._ao_redim_conteudo)
 
         self._offset = 0.0
-        self._altura_bloco = 0
+        self._construir = None   # função que desenha o conteúdo num frame
+        self._bloco = None       # cópia principal (sempre visível)
+        self._copia = None       # segunda cópia, só enquanto precisa rolar
         self._rolando = False
         self._velocidade = velocidade
         self._intervalo = intervalo
@@ -150,16 +154,38 @@ class PainelRolagem(ctk.CTkFrame):
     def _ao_redim_conteudo(self, event):
         self._canvas.configure(scrollregion=(0, 0, event.width, event.height))
 
-    def definir_altura_bloco(self, h):
-        self._altura_bloco = h
+    def definir_conteudo(self, construir):
+        """Troca o conteúdo pelo que *construir(frame)* desenhar e começa a rolar."""
+        self.limpar()
+        self._construir = construir
+        self._bloco = ctk.CTkFrame(self.conteudo, fg_color="transparent")
+        self._bloco.pack(fill="x")
+        construir(self._bloco)
+        self.iniciar()
 
     def limpar(self):
         self.parar()
         for w in self.conteudo.winfo_children():
             w.destroy()
+        self._construir = None
+        self._bloco = None
+        self._copia = None
         self._offset = 0.0
-        self._altura_bloco = 0
         self._canvas.yview_moveto(0)
+
+    def _ajustar_copia(self):
+        """Cria ou remove a segunda cópia conforme o conteúdo caiba ou não."""
+        precisa_rolar = self._bloco.winfo_reqheight() > self._canvas.winfo_height()
+        if precisa_rolar and self._copia is None:
+            self._copia = ctk.CTkFrame(self.conteudo, fg_color="transparent")
+            self._copia.pack(fill="x")
+            self._construir(self._copia)
+        elif not precisa_rolar and self._copia is not None:
+            self._copia.destroy()
+            self._copia = None
+            self._offset = 0.0
+            self._canvas.yview_moveto(0)
+        return precisa_rolar
 
     def iniciar(self):
         if not self._rolando:
@@ -172,21 +198,23 @@ class PainelRolagem(ctk.CTkFrame):
             self.after_cancel(self._after_id)
             self._after_id = None
 
+    def destroy(self):
+        self.parar()
+        super().destroy()
+
     def _tick(self):
         if not self._rolando:
             return
 
-        if self._altura_bloco <= 0:
-            self._after_id = self.after(self._intervalo, self._tick)
-            return
+        if self._bloco is not None and self._ajustar_copia():
+            altura_bloco = self._bloco.winfo_reqheight()
+            self._offset += self._velocidade
+            if self._offset >= altura_bloco:
+                self._offset -= altura_bloco
 
-        self._offset += self._velocidade
-        if self._offset >= self._altura_bloco:
-            self._offset -= self._altura_bloco
-
-        total = self.conteudo.winfo_reqheight()
-        if total > 0:
-            self._canvas.yview_moveto(self._offset / total)
+            total = self.conteudo.winfo_reqheight()
+            if total > 0:
+                self._canvas.yview_moveto(self._offset / total)
 
         self._after_id = self.after(self._intervalo, self._tick)
 
@@ -286,22 +314,12 @@ class JanelaExibicao(ctk.CTkToplevel):
     # ── Painel esquerdo ───────────────────────────────────────────
 
     def _atualizar_esquerda(self, ganhadores, evento, premio):
-        self._painel_rodada.parar()
-        self._painel_rodada.limpar()
         self._lbl_rodada.configure(
             text=f"Rodada {self._rodada_num} — {premio} ({evento})",
         )
-
-        frame = self._painel_rodada.conteudo
-        self._criar_cards(frame, ganhadores)
-
-        frame.update_idletasks()
-        bloco_h = frame.winfo_reqheight()
-
-        self._criar_cards(frame, ganhadores)
-
-        self._painel_rodada.definir_altura_bloco(bloco_h)
-        self._painel_rodada.iniciar()
+        self._painel_rodada.definir_conteudo(
+            lambda frame: self._criar_cards(frame, ganhadores),
+        )
 
     @staticmethod
     def _criar_cards(parent, ganhadores):
@@ -328,19 +346,10 @@ class JanelaExibicao(ctk.CTkToplevel):
     # ── Painel direito ────────────────────────────────────────────
 
     def _atualizar_direita(self):
-        self._painel_todos.parar()
-        self._painel_todos.limpar()
-
-        frame = self._painel_todos.conteudo
-        self._criar_blocos(frame, self._rodadas)
-
-        frame.update_idletasks()
-        bloco_h = frame.winfo_reqheight()
-
-        self._criar_blocos(frame, self._rodadas)
-
-        self._painel_todos.definir_altura_bloco(bloco_h)
-        self._painel_todos.iniciar()
+        rodadas = list(self._rodadas)
+        self._painel_todos.definir_conteudo(
+            lambda frame: self._criar_blocos(frame, rodadas),
+        )
 
     @staticmethod
     def _criar_blocos(parent, rodadas):
@@ -457,7 +466,7 @@ class App(ctk.CTk):
         ctk.CTkLabel(frame_cfg, text="Horário limite:").grid(
             row=1, column=0, padx=10, pady=8, sticky="w",
         )
-        self._var_horario = tk.StringVar()
+        self._var_horario = tk.StringVar(master=self)
         self._var_horario.trace_add("write", self._formatar_horario)
         self._formatando_horario = False
         self.entry_horario = ctk.CTkEntry(

@@ -1,5 +1,6 @@
 """Regras de negócio: listar eventos, filtrar elegíveis e sortear."""
 
+import re
 import secrets
 from datetime import datetime, timedelta
 
@@ -18,10 +19,47 @@ from sorteio.planilha import (
 # desatualizada (OneDrive ainda não baixou as últimas respostas).
 TOLERANCIA_ATRASO = timedelta(minutes=2)
 
+# Nomes que o Forms grava quando a resposta é anônima — não identificam ninguém
+NOMES_SEM_IDENTIDADE = {"", "anonymous", "anonimo", "none"}
 
-def _normalizar_matricula(valor):
-    """Normaliza matrícula: sem espaços nas pontas e em maiúsculas (RN-04)."""
-    return str(valor).strip().upper()
+
+def _texto_matricula(valor):
+    """Matrícula como texto para exibir/gravar (12345.0 do Excel vira "12345")."""
+    if valor is None:
+        return ""
+    if isinstance(valor, float) and valor.is_integer():
+        valor = int(valor)
+    return str(valor).strip()
+
+
+def normalizar_matricula(valor):
+    """Matrícula para comparação (RN-04): só letras e dígitos, maiúsculas;
+    se for só número, sem zeros à esquerda ("0012345", 12345 e "12.345"
+    são a mesma matrícula)."""
+    texto = re.sub(r"[^0-9A-Z]", "", normalizar_texto(_texto_matricula(valor)).upper())
+    if texto.isdigit():
+        texto = texto.lstrip("0") or "0"
+    return texto
+
+
+def _chaves_pessoa(matricula, nome):
+    """Identificadores de uma pessoa: matrícula e nome normalizados.
+
+    Duas linhas são a mesma pessoa se tiverem qualquer chave em comum.
+    Matrícula ou nome vazios (ou "anonymous") não contam como chave.
+    """
+    chaves = set()
+    mat = normalizar_matricula(matricula)
+    if mat:
+        chaves.add(("matricula", mat))
+    nome_norm = normalizar_texto(nome)
+    if nome_norm not in NOMES_SEM_IDENTIDADE:
+        chaves.add(("nome", nome_norm))
+    return chaves
+
+
+def _chaves_inscricao(linha):
+    return _chaves_pessoa(linha[COL_MATRICULA], linha[COL_NOME])
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +133,10 @@ def planilha_pode_estar_desatualizada(inscricoes, horario_limite, agora=None):
 def filtrar_ja_ganhadores(inscricoes, ganhadores_planilha, ganhadores_sessao, evento):
     """Remove dos inscritos quem já ganhou no mesmo evento (RN-02 item 3, RN-03).
 
+    Quem ganhou é reconhecido pela matrícula OU pelo nome (normalizados),
+    para pegar também quem se inscreveu duas vezes com a matrícula
+    digitada de outro jeito. Ganhar em outro evento não impede.
+
     Parâmetros:
         inscricoes: lista de tuplas (saída de filtrar_inscricoes).
         ganhadores_planilha: lista de tuplas já gravadas (saída de ler_ganhadores).
@@ -103,40 +145,54 @@ def filtrar_ja_ganhadores(inscricoes, ganhadores_planilha, ganhadores_sessao, ev
 
     Retorna lista de inscrições elegíveis.
     """
-    # Monta o conjunto de matrículas que já ganharam NESTE evento.
-    # Nos ganhadores gravados: coluna 0 = Evento, coluna 2 = Matrícula
-    matriculas_ganhadoras = set()
+    # Chaves de quem já ganhou NESTE evento.
+    # Nos ganhadores (RN-08): coluna 0 = Evento, 1 = Nome, 2 = Matrícula
+    chaves_ganhadoras = set()
 
     evento_norm = normalizar_texto(evento)
 
     for g in list(ganhadores_planilha) + list(ganhadores_sessao):
         if len(g) > 2 and normalizar_texto(g[0]) == evento_norm:
-            matriculas_ganhadoras.add(_normalizar_matricula(g[2]))
+            chaves_ganhadoras |= _chaves_pessoa(g[2], g[1])
 
-    # Filtra inscrições: mantém quem NÃO está no conjunto de ganhadores
-    elegiveis = []
+    # Mantém quem NÃO tem nenhuma chave em comum com os ganhadores
+    return [
+        linha for linha in inscricoes
+        if not (_chaves_inscricao(linha) & chaves_ganhadoras)
+    ]
+
+
+def remover_inscricoes_repetidas(inscricoes):
+    """Deixa uma inscrição por pessoa (a primeira), para que se inscrever
+    duas vezes não dê duas chances nem permita sair duas vezes na rodada."""
+    vistas = set()
+    unicas = []
     for linha in inscricoes:
-        matricula = _normalizar_matricula(linha[COL_MATRICULA])
-        if matricula not in matriculas_ganhadoras:
-            elegiveis.append(linha)
-
-    return elegiveis
+        chaves = _chaves_inscricao(linha)
+        if chaves & vistas:
+            continue
+        vistas |= chaves
+        unicas.append(linha)
+    return unicas
 
 
 # ---------------------------------------------------------------------------
 # Sortear
 # ---------------------------------------------------------------------------
 def sortear(elegiveis, quantidade, evento, premio):
-    """Sorteia *quantidade* inscritos entre os elegíveis (RN-05).
+    """Sorteia *quantidade* pessoas entre os elegíveis (RN-05).
 
+    Inscrições repetidas da mesma pessoa contam uma vez só.
     Usa secrets.SystemRandom().sample() — aleatoriedade criptográfica.
 
     Retorna lista de tuplas no formato RN-08:
         (evento, nome, matricula, empresa, premio)
 
-    Levanta ValueError se quantidade > len(elegiveis).
+    Levanta ValueError se quantidade > número de pessoas elegíveis.
     Levanta ValueError se não houver elegíveis.
     """
+    elegiveis = remover_inscricoes_repetidas(elegiveis)
+
     if len(elegiveis) == 0:
         raise ValueError("Não há inscritos elegíveis para este sorteio.")
 
@@ -154,7 +210,7 @@ def sortear(elegiveis, quantidade, evento, premio):
         ganhador = (
             evento.strip(),
             str(linha[COL_NOME]).strip() if linha[COL_NOME] is not None else "",
-            _normalizar_matricula(linha[COL_MATRICULA]),
+            _texto_matricula(linha[COL_MATRICULA]),
             str(linha[COL_EMPRESA]).strip() if linha[COL_EMPRESA] is not None else "",
             premio.strip(),
         )

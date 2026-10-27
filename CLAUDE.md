@@ -27,12 +27,22 @@ python -m sorteio
 python -m pip install pyinstaller
 pyinstaller --onefile --windowed --name SorteioSIPAT sorteio/__main__.py
 
+# Testes automatizados (unittest, sem dependência extra)
+python -m unittest discover -s tests -t . -v
+python -m unittest tests.test_auditoria      # só a auditoria de ponta a ponta
+
 # Testes manuais — usar cópia de teste, nunca a planilha real
 # Arquivo de teste: data/exemplo/teste.xlsx
 # Lista de critérios de aceite: seção 11 do SPEC.md
 ```
 
-Não há suite de testes automatizados (pytest está listado como opcional no SPEC). Testes são feitos manualmente conforme a checklist da seção 11 do SPEC.
+Testes em `tests/` (dados fictícios gerados em pasta temporária por `tests/apoio.py`, no formato do Forms):
+- `test_planilha.py` — leitura pelo cabeçalho, erros de arquivo, gravar/ler ganhadores.
+- `test_sorteador.py` — filtros, normalização, quem já ganhou, sorteio sem repetição.
+- `test_auditoria.py` — várias sessões gravando/relendo em disco até esgotar os elegíveis; verifica que ninguém repete no mesmo evento e que pode ganhar em outro.
+- `test_telas.py` — tela de exibição (cada ganhador aparece uma vez) e fluxo Play/Encerrar; pulado sem tela (Tk).
+
+Rodar a suíte antes de gerar um `.exe` novo.
 
 ## Architecture
 
@@ -92,6 +102,8 @@ A planilha do Forms **nunca é reescrita** — o sistema só a lê. Isso evita c
 - Aleatoriedade com `secrets.SystemRandom().sample()`, nunca `random`.
 - Planilhas reais nunca vão para o git (LGPD). Testes sempre em `data/exemplo/teste.xlsx`.
 - A planilha é lida no momento do play (não ao abrir o programa) — RN-07.
-- Normalização de matrícula: `str(valor).strip().upper()` — RN-04.
+- Normalização de matrícula: `normalizar_matricula` em `sorteador.py` — só letras/dígitos, maiúsculas, sem zeros à esquerda se for numérica (`"0012345"`, `12345`, `12345.0`, `"12.345"` são iguais) — RN-04.
+- Mesma pessoa = mesma matrícula **ou** mesmo nome normalizado (nome "anonymous"/vazio não conta). Vale para RN-03 (`filtrar_ja_ganhadores`) e para inscrições repetidas, que contam uma vez só no sorteio (`remover_inscricoes_repetidas`, chamada dentro de `sortear`).
+- `PainelRolagem` (tela de exibição) só cria a segunda cópia do conteúdo — usada no loop da rolagem — quando ele não cabe na tela; senão o ganhador apareceria duplicado.
 - Constantes de índice dos campos (`COL_NOME`, `COL_EMPRESA`, `COL_MATRICULA`, `COL_EVENTO`, `COL_HORA`) ficam em `planilha.py`. Nunca usar índices soltos espalhados pelo código.
 - Se a planilha real tiver um cabeçalho que as palavras-chave não reconhecem, ajustar `CABECALHOS_ESPERADOS` em `planilha.py` (a mensagem de erro lista os cabeçalhos encontrados) — seção 3.1 do SPEC.
